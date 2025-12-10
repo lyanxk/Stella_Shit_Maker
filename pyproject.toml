@@ -1,0 +1,12 @@
+[project]
+name = "stellashitmaker"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.13"
+dependencies = [
+    "keyboard==0.13.5",
+    "opencv-python==4.12.0.88",
+    "pillow==12.0.0",
+    "pyautogui==0.9.54",
+    "pytesseract==0.3.13",
+]
