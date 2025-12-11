@@ -1,59 +1,3 @@
-"""
-auto_tower.py
-================
-
-This module contains a fully automated script for quickly clearing the tower
-gameplay loop in Star Tower Traveller (星塔旅人) when running through
-the MuMu Android emulator.  The script makes heavy use of image
-recognition to detect buttons and other UI elements on screen and then
-simulates mouse clicks using the ``pyautogui`` library.  The
-templates used for matching live UI state live in the ``resources``
-directory alongside this file.  They are small, cropped PNG files for
-each button/icon described in the project documentation.
-
-The high‑level flow implemented here is a direct translation of the
-step‑by‑step procedure provided by the user:
-
-1.  Wait for the **快速战斗** (quick fight) button and click it.
-2.  Wait for the **下一步** (next) button and click it.
-3.  Wait for the **开始战斗** (start battle) button and click it.
-4.  Enter the tower climb loop:
-   * Repeatedly click near the left edge of the MuMu window to fast‑forward
-     through empty turns.
-   * If a choice dialog appears, prefer options marked with the “thumbs
-     up” (choice.png) icon; otherwise choose the first option.
-   * Special handling for shops: if the game reports that you have
-     encountered a shop, a three‑bubble dialog appears.  The script
-     chooses the second bubble twice to purchase two items, then the
-     first bubble to enter the shop.  Inside the shop it buys all
-     “note” items (之音) and any 100‑point drinks, optionally using
-     the refresh button to reset the shop up to two times in the final
-     shop.
-   * When no more interactions are available (no thumbs‑up icons
-     detected) the script clicks the “离开星塔” (leave tower) button to
-     finish the run.
-
-Because the emulator window can be moved or resized, the script
-determines its screen coordinates at runtime using the ``pygetwindow``
-package.  All click operations are expressed relative to this window.
-
-To run this script you will need the following third‑party Python
-packages installed in your environment:
-
-* pyautogui — for taking screenshots and sending mouse clicks.
-* opencv‑python — for template matching of UI elements.
-* numpy — used by OpenCV.
-* pillow — for basic image manipulations (installed implicitly with
-  pyautogui).
-* pygetwindow — for locating the MuMu window.
-
-Note: The script does not attempt to handle every failure case.  If
-images cannot be found (e.g. because the game UI changed) then the
-script will time out and exit.  You may need to adjust the
-``IMAGE_MATCH_THRESHOLD`` or provide updated templates in the
-``resources`` directory if the game UI changes in the future.
-"""
-
 import os
 import time
 from typing import Optional, Tuple
@@ -62,35 +6,28 @@ import cv2
 import numpy as np
 import pyautogui
 import pygetwindow as gw
+import keyboard
 
-
-# Path to the directory containing this script.  Resource images are
-# stored relative to this path in the ``resources`` subdirectory.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESOURCE_DIR = os.path.join(BASE_DIR, "resources")
 
-# Confidence threshold for template matching.  If your templates are
-# particularly small or low contrast you may need to lower this a
-# little (e.g. 0.7) or adjust it upwards for stricter matching.
-IMAGE_MATCH_THRESHOLD = 0.8
+IMAGE_MATCH_THRESHOLD = 0.80
 
-# Names of the template files used for each UI action.  These PNG
-# images must exist in the ``resources`` directory.
 TEMPLATES = {
     "quick_start": "quick_start_button.png",
     "next": "next.png",
     "start_battle": "start_battle.png",
-    "choice": "choice.png",        # thumbs up icon for best choices
-    "tag": "tag.png",              # speech bubble icon for generic options
-    "note": "note.png",            # icon indicating 之音 (note) items
-    "hundred": "100.png",          # text “100” for 100‑point drinks
-    "buy": "buy.png",             # “购买” button in shop
-    "refresh": "refresh.png",     # “刷新” button in shop
-    "back": "back.png",           # generic “返回” arrow
-    "leave": "leave.png",         # bubble option used to leave a floor
-    "save": "save.png",           # “保存记录” button when leaving
-    "enter_shop": "enter_shop.png",  # text indicating you found a shop
-    "not_enough_money": "not_enough_money.png",  # insufficient currency notice
+    "choice": "choice.png",
+    "tag": "tag.png",
+    "note": "note.png",
+    "hundred": "100.png",
+    "buy": "buy.png",
+    "refresh": "refresh.png",
+    "back": "back.png",
+    "leave": "leave.png",
+    "save": "save.png",
+    "enter_shop": "enter_shop.png",
+    "not_enough_money": "not_enough_money.png",
     "enter": "enter_button.png",
     "confirm": "confirm.png",
     "select": "select.png",
@@ -98,6 +35,41 @@ TEMPLATES = {
     "shop": "shop.png",
     "strengthen": "strengthen.png",
 }
+
+PAUSED = False
+SKIP_INITIAL_WAIT = False
+RUNNING = True
+
+
+def toggle_pause():
+    global PAUSED
+    PAUSED = not PAUSED
+    if PAUSED:
+        print("[Hotkey] Paused")
+    else:
+        print("[Hotkey] Resumed")
+
+
+def mark_skip_initial():
+    global SKIP_INITIAL_WAIT
+    SKIP_INITIAL_WAIT = True
+    print("[Hotkey] Skip initial waits enabled")
+
+
+def stop_running():
+    global RUNNING
+    RUNNING = False
+    print("[Hotkey] Stop requested")
+
+
+def check_pause_and_running():
+    global RUNNING
+    if not RUNNING:
+        raise KeyboardInterrupt("User requested stop")
+    while PAUSED and RUNNING:
+        time.sleep(0.1)
+    if not RUNNING:
+        raise KeyboardInterrupt("User requested stop")
 
 
 def load_template(name: str) -> Optional[np.ndarray]:
@@ -107,8 +79,6 @@ def load_template(name: str) -> Optional[np.ndarray]:
     path = os.path.join(RESOURCE_DIR, filename)
     if not os.path.isfile(path):
         return None
-
-    # 统一读成 3 通道 BGR，避免和截图类型不一致
     template = cv2.imread(path, cv2.IMREAD_COLOR)
     if template is None or template.size == 0:
         return None
@@ -116,10 +86,6 @@ def load_template(name: str) -> Optional[np.ndarray]:
 
 
 def get_emulator_window() -> Optional[gw.Win32Window]:
-    """Find the first window whose title contains 'mumu' or '模拟器'.
-
-    Returns None if no such window can be found.
-    """
     for window in gw.getAllWindows():
         title = window.title.lower()
         if "mumu" in title or "模拟器" in title:
@@ -128,17 +94,11 @@ def get_emulator_window() -> Optional[gw.Win32Window]:
 
 
 def capture_emulator() -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
-    """Capture a screenshot of the MuMu emulator window.
-
-    Returns both the captured BGR image and the (left, top, width,
-    height) of the window on screen.  Raises RuntimeError if the
-    emulator window cannot be found.
-    """
+    check_pause_and_running()
     win = get_emulator_window()
     if not win:
         raise RuntimeError("MuMu window not found. Ensure the emulator is running.")
     left, top, width, height = win.left, win.top, win.width, win.height
-    # Avoid capturing when the window is minimized
     if width <= 0 or height <= 0:
         win.restore()
         time.sleep(0.5)
@@ -149,15 +109,10 @@ def capture_emulator() -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
 
 
 def match_template(src: np.ndarray, template: np.ndarray, threshold: float = IMAGE_MATCH_THRESHOLD) -> Optional[Tuple[int, int]]:
-    """Search for a template inside a larger BGR image.
-
-    If found with confidence >= threshold, return the centre coordinates
-    (x, y) relative to ``src``.  Otherwise return None.
-    """
     if src is None or template is None:
         return None
     result = cv2.matchTemplate(src, template, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
     if max_val < threshold:
         return None
     t_h, t_w = template.shape[:2]
@@ -168,21 +123,16 @@ def match_template(src: np.ndarray, template: np.ndarray, threshold: float = IMA
 
 
 def wait_and_click(template_name: str, timeout: float = 30.0, threshold: float = IMAGE_MATCH_THRESHOLD) -> bool:
-    """Wait until a template appears on screen and click its centre.
-
-    Args:
-        template_name: Key in the TEMPLATES dictionary.
-        timeout: Maximum time to wait in seconds.
-        threshold: Matching confidence threshold.
-
-    Returns:
-        True if the template was found and clicked, False on timeout.
-    """
     template = load_template(template_name)
     if template is None:
         raise ValueError(f"Template {template_name} not found in resources.")
     start = time.time()
+    is_initial_btn = template_name in ("quick_start", "next", "start_battle")
     while time.time() - start < timeout:
+        check_pause_and_running()
+        if is_initial_btn and SKIP_INITIAL_WAIT:
+            print(f"[Skip] Skip waiting for {template_name}")
+            return False
         img, (left, top, width, height) = capture_emulator()
         pos = match_template(img, template, threshold)
         if pos:
@@ -192,17 +142,12 @@ def wait_and_click(template_name: str, timeout: float = 30.0, threshold: float =
             pyautogui.click(screen_x, screen_y)
             return True
         time.sleep(0.5)
+    print(f"[Timeout] {template_name} not found in {timeout} seconds")
     return False
 
 
 def click_relative(offset_x: int, offset_y: int, window_rect: Tuple[int, int, int, int], delay: float = 0.0):
-    """Click at a point relative to the emulator window.
-
-    Args:
-        offset_x, offset_y: Coordinates relative to the top‑left of the emulator window.
-        window_rect: The (left, top, width, height) of the emulator window.
-        delay: Optional sleep after the click.
-    """
+    check_pause_and_running()
     left, top, _, _ = window_rect
     pyautogui.click(left + offset_x, top + offset_y)
     if delay:
@@ -210,145 +155,223 @@ def click_relative(offset_x: int, offset_y: int, window_rect: Tuple[int, int, in
 
 
 def continuous_fast_click(delay: float = 0.05, duration: float = 2.0):
-    """Continuously click near the left centre of the emulator for a duration.
-
-    This helper speeds through animations.  It captures the emulator
-    window once to compute the click position then repeatedly clicks
-    until the duration has elapsed.
-    """
     img, rect = capture_emulator()
     left, top, width, height = rect
-    click_x = left + 10  # 10px offset from left edge
+    click_x = left + 10
     click_y = top + height // 2
     end_time = time.time() + duration
     while time.time() < end_time:
+        check_pause_and_running()
         pyautogui.click(click_x, click_y)
         time.sleep(delay)
 
 
 def select_choice_or_first():
-    """Handle generic choice dialogs.
-
-    This function searches for the thumbs‑up (choice) icon on screen.  If
-    found, it clicks the option associated with it (by clicking the
-    centre of that icon).  Otherwise, it assumes a standard three‑line
-    dialog and clicks on the first option (the uppermost line).  This
-    relies on the choice icon being the leftmost element in each option.
-    """
-    # Load icons
+    select_icon = load_template("select")
     choice_icon = load_template("choice")
-    tag_icon = load_template("tag")
+
     img, rect = capture_emulator()
-    # Try to find the thumbs‑up icon first
-    pos = match_template(img, choice_icon)
-    if pos:
-        click_x, click_y = pos
-        pyautogui.click(rect[0] + click_x, rect[1] + click_y)
+    check_pause_and_running()
+
+    select_pos = match_template(img, select_icon, threshold=0.7) if select_icon is not None else None
+    if select_pos:
+        sx, sy = select_pos
+        print(f"[Debug] select matched at ({sx}, {sy})")
+        pyautogui.click(rect[0] + sx, rect[1] + sy)
+        time.sleep(0.3)
+        t0 = time.time()
+        while time.time() - t0 < 3:
+            check_pause_and_running()
+            img2, rect2 = capture_emulator()
+            conf_icon = load_template("select_confirm")
+            conf_pos = match_template(img2, conf_icon, threshold=0.7) if conf_icon is not None else None
+            if conf_pos:
+                cx, cy = conf_pos
+                print(f"[Debug] select_confirm matched at ({cx}, {cy})")
+                pyautogui.click(rect2[0] + cx, rect2[1] + cy)
+                break
+            time.sleep(0.2)
         return
-    # Otherwise click the first tag bubble if present
-    pos = match_template(img, tag_icon)
-    if pos:
-        click_x, click_y = pos
-        pyautogui.click(rect[0] + click_x, rect[1] + click_y)
+
+    choice_pos = match_template(img, choice_icon, threshold=0.8) if choice_icon is not None else None
+    if choice_pos:
+        cx, cy = choice_pos
+        print(f"[Debug] choice matched at ({cx}, {cy})")
+        pyautogui.click(rect[0] + cx, rect[1] + cy)
         return
-    # Fallback: click near the top of the dialog area (safe default)
-    # This uses an offset relative to the emulator window.
-    click_relative(200, 350, rect)  # adjust these offsets if needed
+
+    left, top, width, height = rect
+    x = left + int(width * 0.2)
+    y = top + height // 2
+    print(f"[Debug] fallback click at ({x}, {y})")
+    pyautogui.click(x, y)
+
+def click_blank(rect):
+    check_pause_and_running()
+    left, top, width, height = rect
+    x = left + 10
+    y = top + height // 2
+    pyautogui.click(x, y)
+
+def find_all_matches(img: np.ndarray, template: np.ndarray, threshold: float) -> list[tuple[int, int]]:
+    if img is None or template is None:
+        return []
+    result = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
+    ys, xs = np.where(result >= threshold)
+    if len(xs) == 0:
+        return []
+    t_h, t_w = template.shape[:2]
+    centers = [(int(x + t_w // 2), int(y + t_h // 2)) for x, y in zip(xs, ys)]
+    centers.sort(key=lambda p: (p[1], p[0]))
+    filtered = []
+    min_dist = 20
+    for cx, cy in centers:
+        ok = True
+        for fx, fy in filtered:
+            if abs(cx - fx) + abs(cy - fy) < min_dist:
+                ok = False
+                break
+        if ok:
+            filtered.append((cx, cy))
+    return filtered
 
 
 def handle_shop(final_shop: bool = False):
-    """Enter the shop and perform purchases according to the rules.
-
-    For the first three shops, the strategy is:
-    - Select the second option twice to purchase two items.
-    - Then select the first option to enter the shop.
-    - Inside the shop, purchase all items matching either the note
-      icon or 100‑point drinks.
-    - Exit the shop and select the third bubble to move on.
-
-    For the final shop (``final_shop=True``), the strategy is the
-    above plus two refreshes.  After buying all note/100‑point items
-    once, refresh and repeat the buy.  On the second refresh, select
-    all options with the tag icon.  When finished, exit the shop and
-    click the second bubble repeatedly until no choices appear.  Then
-    continue as normal.
-    """
-    # Helper to enter second bubble twice then first
     def click_bubble(index: int):
-        """Click the bubble at a given index (0=first, 1=second, 2=third)."""
         img, rect = capture_emulator()
         h = rect[3]
-        # Approximate vertical positions for the three bubbles relative to the window height
-        bubble_y_positions = [int(0.70 * h), int(0.80 * h), int(0.90 * h)]
-        click_relative(300, bubble_y_positions[index], rect)
+        bubble_y_positions = [int(0.40 * h), int(0.60 * h), int(0.80 * h)]
+        click_relative(500, bubble_y_positions[index], rect)
         time.sleep(0.8)
 
-    # Buy function inside shop: purchase note items and 100 drinks
     def purchase_items():
-        while True:
-            img, rect = capture_emulator()
-            # Check if the "buy" button is present (indicating an item is selected)
-            buy_template = load_template("buy")
-            buy_pos = match_template(img, buy_template, threshold=0.8)
-            if buy_pos:
-                bx, by = buy_pos
-                pyautogui.click(rect[0] + bx, rect[1] + by)
-                time.sleep(0.5)
-                # confirm purchase if confirm dialog appears
-                confirm_template = load_template("confirm")
-                img2, rect2 = capture_emulator()
-                conf_pos = match_template(img2, confirm_template, threshold=0.8)
-                if conf_pos:
-                    cx, cy = conf_pos
-                    pyautogui.click(rect2[0] + cx, rect2[1] + cy)
-                time.sleep(1.0)
-                continue
-            # Look for note or 100 icons
-            note_template = load_template("note")
-            hundred_template = load_template("hundred")
-            note_pos = match_template(img, note_template, threshold=0.8)
-            hundred_pos = match_template(img, hundred_template, threshold=0.8)
-            if note_pos:
-                x, y = note_pos
-                pyautogui.click(rect[0] + x, rect[1] + y)
-                time.sleep(0.5)
-                continue
-            if hundred_pos:
-                x, y = hundred_pos
-                pyautogui.click(rect[0] + x, rect[1] + y)
-                time.sleep(0.5)
-                continue
-            # If no items found, break
-            break
+        note_template = load_template("note")
+        hundred_template = load_template("hundred")
+        buy_template = load_template("buy")
+        confirm_template = load_template("confirm")
+        if note_template is None and hundred_template is None:
+            return
 
-    # Pre‑shop: click second bubble twice then first bubble
+        # 先买所有 note
+        while True:
+            check_pause_and_running()
+            img, rect = capture_emulator()
+            note_positions = find_all_matches(img, note_template, 0.8) if note_template is not None else []
+            if not note_positions:
+                break
+            for cx, cy in note_positions:
+                check_pause_and_running()
+                img1, rect1 = capture_emulator()
+                pyautogui.click(rect1[0] + cx, rect1[1] + cy)
+                time.sleep(0.3)
+                img2, rect2 = capture_emulator()
+                buy_pos = match_template(img2, buy_template, threshold=0.8)
+                if not buy_pos:
+                    continue
+                bx, by = buy_pos
+                pyautogui.click(rect2[0] + bx, rect2[1] + by)
+                time.sleep(0.4)
+                img3, rect3 = capture_emulator()
+                conf_pos = match_template(img3, confirm_template,
+                                          threshold=0.8) if confirm_template is not None else None
+                if conf_pos:
+                    kx, ky = conf_pos
+                    pyautogui.click(rect3[0] + kx, rect3[1] + ky)
+                    time.sleep(0.2)
+                click_blank(rect3)
+                click_blank(rect3)
+                click_blank(rect3)
+                time.sleep(0.8)
+            time.sleep(0.2)
+
+        # 再买所有 100，并在每次买完后走大拇指 + 拿走 + 空白
+        while True:
+            check_pause_and_running()
+            img, rect = capture_emulator()
+            hundred_positions = find_all_matches(img, hundred_template, 0.8) if hundred_template is not None else []
+            if not hundred_positions:
+                break
+            for cx, cy in hundred_positions:
+                check_pause_and_running()
+                img1, rect1 = capture_emulator()
+                pyautogui.click(rect1[0] + cx, rect1[1] + cy)
+                time.sleep(0.3)
+                img2, rect2 = capture_emulator()
+                buy_pos = match_template(img2, buy_template, threshold=0.8)
+                if not buy_pos:
+                    continue
+                bx, by = buy_pos
+                pyautogui.click(rect2[0] + bx, rect2[1] + by)
+                time.sleep(0.4)
+                img3, rect3 = capture_emulator()
+                conf_pos = match_template(img3, confirm_template,
+                                          threshold=0.8) if confirm_template is not None else None
+                if conf_pos:
+                    kx, ky = conf_pos
+                    pyautogui.click(rect3[0] + kx, rect3[1] + ky)
+                    time.sleep(0.2)
+                click_blank(rect3)
+                click_blank(rect3)
+                click_blank(rect3)
+                time.sleep(0.8)
+                take_thumb_reward()
+            time.sleep(0.2)
+
+    def take_thumb_reward(timeout: float = 6.0):
+        start = time.time()
+        select_icon = load_template("select")
+        confirm_icon = load_template("select_confirm")
+        if select_icon is None or confirm_icon is None:
+            return
+        while time.time() - start < timeout:
+            check_pause_and_running()
+            img, rect = capture_emulator()
+            select_pos = match_template(img, select_icon, threshold=0.7)
+            if select_pos:
+                sx, sy = select_pos
+                pyautogui.click(rect[0] + sx, rect[1] + sy)
+                time.sleep(0.3)
+                t0 = time.time()
+                while time.time() - t0 < 3.0:
+                    check_pause_and_running()
+                    img2, rect2 = capture_emulator()
+                    conf_pos = match_template(img2, confirm_icon, threshold=0.7)
+                    if conf_pos:
+                        cx, cy = conf_pos
+                        pyautogui.click(rect2[0] + cx, rect2[1] + cy)
+                        time.sleep(0.2)
+                        click_blank(rect2)
+                        return
+                    time.sleep(0.2)
+                return
+            time.sleep(0.2)
+
     click_bubble(1)
+    take_thumb_reward()
     click_bubble(1)
+    take_thumb_reward()
     click_bubble(0)
-    # Inside shop: buy items, handle refreshes if final shop
     refresh_template = load_template("refresh")
     back_template = load_template("back")
     tag_template = load_template("tag")
-    # First purchase
     purchase_items()
     if final_shop:
-        # Up to two refresh cycles
         refreshes = 0
         while refreshes < 2:
+            check_pause_and_running()
             img, rect = capture_emulator()
             pos = match_template(img, refresh_template, threshold=0.8)
             if pos:
                 x, y = pos
                 pyautogui.click(rect[0] + x, rect[1] + y)
                 time.sleep(1.0)
-                # After refresh, purchase note/100 again
                 purchase_items()
                 refreshes += 1
             else:
                 break
-        # On second refresh, select all tag options
         if refreshes == 2:
             while True:
+                check_pause_and_running()
                 img, rect = capture_emulator()
                 pos = match_template(img, tag_template, threshold=0.8)
                 if not pos:
@@ -356,7 +379,6 @@ def handle_shop(final_shop: bool = False):
                 x, y = pos
                 pyautogui.click(rect[0] + x, rect[1] + y)
                 time.sleep(0.5)
-            # exit shop
             img, rect = capture_emulator()
             back_pos = match_template(img, back_template, threshold=0.8)
             if back_pos:
@@ -364,66 +386,71 @@ def handle_shop(final_shop: bool = False):
                 pyautogui.click(rect[0] + x, rect[1] + y)
                 time.sleep(0.5)
     else:
-        # not final shop: exit via back arrow when done
         img, rect = capture_emulator()
         back_pos = match_template(img, back_template, threshold=0.8)
         if back_pos:
             x, y = back_pos
             pyautogui.click(rect[0] + x, rect[1] + y)
             time.sleep(0.5)
-    # After returning to bubbles: click third bubble to leave floor
     click_bubble(2)
 
 
+
 def main_loop():
-    """Execute the automated tower clear flow from beginning to end."""
-    # Step 1: click quick start, next, start battle
-    print("Waiting for 快速战斗 button…")
+    global SKIP_INITIAL_WAIT
+    print("Waiting for 快速战斗 (press S to skip initial waits, P pause, Q quit)")
     wait_and_click("quick_start", timeout=60)
-    print("Waiting for 下一步 button…")
+    print("Waiting for 下一步")
     wait_and_click("next", timeout=60)
-    print("Waiting for 开始战斗 button…")
+    print("Waiting for 开始战斗")
     wait_and_click("start_battle", timeout=60)
+    SKIP_INITIAL_WAIT = False
     print("Entered tower run. Starting automation…")
     shop_counter = 0
     max_shops = 4
     while True:
-        # Fast click left side to progress until something pops up
+        check_pause_and_running()
         continuous_fast_click(delay=0.05, duration=1.5)
-        # Check for leave option (save button) after finishing a floor
         img, rect = capture_emulator()
         save_template = load_template("save")
         save_pos = match_template(img, save_template, threshold=0.8)
         if save_pos:
-            # Click save and exit: run complete
             sx, sy = save_pos
             pyautogui.click(rect[0] + sx, rect[1] + sy)
             print("Found 保存记录. Exiting run…")
             break
-        # Check for shop notification (enter_shop text)
         enter_shop_template = load_template("enter_shop")
         shop_pos = match_template(img, enter_shop_template, threshold=0.8)
         if shop_pos and shop_counter < max_shops:
             print(f"Encountered shop {shop_counter + 1}")
-            final_shop = (shop_counter == max_shops - 1)
+            final_shop = shop_counter == max_shops - 1
             handle_shop(final_shop=final_shop)
             shop_counter += 1
             continue
-        # Check for choice/dialog bubble (tag icon) or thumbs up
+        select_template = load_template("select")
         choice_template = load_template("choice")
-        tag_template = load_template("tag")
-        choice_pos = match_template(img, choice_template, threshold=0.8)
-        tag_pos = match_template(img, tag_template, threshold=0.8)
-        if choice_pos or tag_pos:
+        select_pos = match_template(img, select_template, threshold=0.7) if select_template is not None else None
+        choice_pos = match_template(img, choice_template, threshold=0.8) if choice_template is not None else None
+        if select_pos or choice_pos:
+            print(f"[Debug] select_pos={select_pos}, choice_pos={choice_pos}")
             select_choice_or_first()
             continue
-        # Fallback: continue clicking; nothing to do this loop
+
         time.sleep(0.2)
     print("Automation complete.")
 
 
 if __name__ == "__main__":
+    keyboard.add_hotkey("p", toggle_pause)
+    keyboard.add_hotkey("s", mark_skip_initial)
+    keyboard.add_hotkey("q", stop_running)
+    print("Hotkeys: P=pause/resume, S=skip initial waits, Q=quit")
     try:
         main_loop()
+    except KeyboardInterrupt:
+        print("Stopped by user.")
     except Exception as e:
         print(f"Error: {e}")
+    finally:
+        RUNNING = False
+        print("Script finished.")

@@ -235,6 +235,22 @@ def find_all_matches(img: np.ndarray, template: np.ndarray, threshold: float) ->
             filtered.append((cx, cy))
     return filtered
 
+def clear_all_tags():
+    tag_template = load_template("tag")
+    if tag_template is None:
+        return
+
+    # 一次截图，一次性找出所有 tag
+    img, rect = capture_emulator()
+    tag_positions = find_all_matches(img, tag_template, threshold=0.8)
+    if not tag_positions:
+        return
+
+    for cx, cy in tag_positions:
+        check_pause_and_running()
+        # 按列表依次点击
+        pyautogui.click(rect[0] + cx, rect[1] + cy)
+        time.sleep(0.3)
 
 def handle_shop(final_shop: bool = False):
     def click_bubble(index: int):
@@ -370,21 +386,14 @@ def handle_shop(final_shop: bool = False):
             else:
                 break
         if refreshes == 2:
-            while True:
-                check_pause_and_running()
-                img, rect = capture_emulator()
-                pos = match_template(img, tag_template, threshold=0.8)
-                if not pos:
-                    break
-                x, y = pos
-                pyautogui.click(rect[0] + x, rect[1] + y)
-                time.sleep(0.5)
+            clear_all_tags()
             img, rect = capture_emulator()
             back_pos = match_template(img, back_template, threshold=0.8)
             if back_pos:
                 x, y = back_pos
                 pyautogui.click(rect[0] + x, rect[1] + y)
                 time.sleep(0.5)
+
     else:
         img, rect = capture_emulator()
         back_pos = match_template(img, back_template, threshold=0.8)
