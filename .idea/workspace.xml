@@ -4,12 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="55ced7f0-0501-432b-9fbe-d490843c9746" name="更改" comment="修改最后一层商店，尚未测试，下周周常测试">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/auto_tower.py" beforeDir="false" afterPath="$PROJECT_DIR$/auto_tower.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/auto_tower_test.py" beforeDir="false" afterPath="$PROJECT_DIR$/auto_tower_test.py" afterDir="false" />
-    </list>
+    <list default="true" id="55ced7f0-0501-432b-9fbe-d490843c9746" name="更改" comment="目前可以自动跑到第20层，20层商店流程还未完善" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -96,7 +91,7 @@
       <workItem from="1765371183665" duration="8300000" />
       <workItem from="1765455167879" duration="641000" />
       <workItem from="1765455858757" duration="25000" />
-      <workItem from="1765789571642" duration="6683000" />
+      <workItem from="1765789571642" duration="6802000" />
     </task>
     <task id="LOCAL-00001" summary="大体完成">
       <option name="closed" value="true" />
@@ -122,7 +117,15 @@
       <option name="project" value="LOCAL" />
       <updated>1765455626680</updated>
     </task>
-    <option name="localTasksCounter" value="4" />
+    <task id="LOCAL-00004" summary="目前可以自动跑到第20层，20层商店流程还未完善">
+      <option name="closed" value="true" />
+      <created>1765796328644</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1765796328644</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -142,7 +145,8 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="大体完成" />
     <MESSAGE value="修改最后一层商店，尚未测试，下周周常测试" />
-    <option name="LAST_COMMIT_MESSAGE" value="修改最后一层商店，尚未测试，下周周常测试" />
+    <MESSAGE value="目前可以自动跑到第20层，20层商店流程还未完善" />
+    <option name="LAST_COMMIT_MESSAGE" value="目前可以自动跑到第20层，20层商店流程还未完善" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/StellaShitMaker$auto_tower.coverage" NAME="auto_tower 覆盖结果" MODIFIED="1765373160423" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="false" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$" />
