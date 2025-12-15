@@ -1,5 +1,6 @@
 import os
 import time
+from time import sleep
 from typing import Optional, Tuple
 
 import cv2
@@ -34,6 +35,7 @@ TEMPLATES = {
     "select_confirm": "select_confirm.png",
     "shop": "shop.png",
     "strengthen": "strengthen.png",
+    "sold_out": "sold_out.png",
 }
 
 PAUSED = False
@@ -108,7 +110,8 @@ def capture_emulator() -> Tuple[np.ndarray, Tuple[int, int, int, int]]:
     return img, (left, top, width, height)
 
 
-def match_template(src: np.ndarray, template: np.ndarray, threshold: float = IMAGE_MATCH_THRESHOLD) -> Optional[Tuple[int, int]]:
+def match_template(src: np.ndarray, template: np.ndarray, threshold: float = IMAGE_MATCH_THRESHOLD) -> Optional[
+    Tuple[int, int]]:
     if src is None or template is None:
         return None
     result = cv2.matchTemplate(src, template, cv2.TM_CCOEFF_NORMED)
@@ -206,12 +209,14 @@ def select_choice_or_first():
     print(f"[Debug] fallback click at ({x}, {y})")
     pyautogui.click(x, y)
 
+
 def click_blank(rect):
     check_pause_and_running()
     left, top, width, height = rect
     x = left + 10
     y = top + height // 2
     pyautogui.click(x, y)
+
 
 def find_all_matches(img: np.ndarray, template: np.ndarray, threshold: float) -> list[tuple[int, int]]:
     if img is None or template is None:
@@ -235,28 +240,12 @@ def find_all_matches(img: np.ndarray, template: np.ndarray, threshold: float) ->
             filtered.append((cx, cy))
     return filtered
 
-def clear_all_tags():
-    tag_template = load_template("tag")
-    if tag_template is None:
-        return
-
-    # 一次截图，一次性找出所有 tag
-    img, rect = capture_emulator()
-    tag_positions = find_all_matches(img, tag_template, threshold=0.8)
-    if not tag_positions:
-        return
-
-    for cx, cy in tag_positions:
-        check_pause_and_running()
-        # 按列表依次点击
-        pyautogui.click(rect[0] + cx, rect[1] + cy)
-        time.sleep(0.3)
 
 def handle_shop(final_shop: bool = False):
     def click_bubble(index: int):
         img, rect = capture_emulator()
         h = rect[3]
-        bubble_y_positions = [int(0.40 * h), int(0.60 * h), int(0.80 * h)]
+        bubble_y_positions = [int(0.40 * h), int(0.60 * h), int(0.75 * h)]
         click_relative(500, bubble_y_positions[index], rect)
         time.sleep(0.8)
 
@@ -268,25 +257,55 @@ def handle_shop(final_shop: bool = False):
         if note_template is None and hundred_template is None:
             return
 
-        # 先买所有 note
+        # 先买所有 note（用 sold_out 标记过滤，避免重复点已买过/已售罄的格子）
+        sold_out_template = load_template("sold_out")
+
+        def is_near_any(x: int, y: int, points: list[tuple[int, int]], dist: int = 45) -> bool:
+            # dist 可调：售罄标记和物品图标通常很近，45~70 都常用
+            for px, py in points:
+                if abs(x - px) + abs(y - py) <= dist:
+                    return True
+            return False
+
         while True:
             check_pause_and_running()
             img, rect = capture_emulator()
+
             note_positions = find_all_matches(img, note_template, 0.8) if note_template is not None else []
             if not note_positions:
                 break
-            for cx, cy in note_positions:
+
+            # 一次性扫描所有 sold_out，作为“已售罄/已购买”的标记列表
+            sold_positions = []
+            if sold_out_template is not None:
+                sold_positions = find_all_matches(img, sold_out_template, 0.8)
+
+            # 过滤掉“旁边已经有 sold_out 标记”的 note
+            filtered_notes = [p for p in note_positions if not is_near_any(p[0], p[1], sold_positions, dist=150)]
+            if not filtered_notes:
+                # 当前屏所有 note 都已经售罄/买过（或被标记了），结束 note 购买
+                break
+
+            any_bought = False
+
+            for cx, cy in filtered_notes:
                 check_pause_and_running()
+
+                # 点 note
                 img1, rect1 = capture_emulator()
                 pyautogui.click(rect1[0] + cx, rect1[1] + cy)
-                time.sleep(0.3)
+                time.sleep(0.25)
+
+                # 点 buy
                 img2, rect2 = capture_emulator()
                 buy_pos = match_template(img2, buy_template, threshold=0.8)
                 if not buy_pos:
                     continue
                 bx, by = buy_pos
                 pyautogui.click(rect2[0] + bx, rect2[1] + by)
-                time.sleep(0.4)
+                time.sleep(0.35)
+
+                # confirm（如果有）
                 img3, rect3 = capture_emulator()
                 conf_pos = match_template(img3, confirm_template,
                                           threshold=0.8) if confirm_template is not None else None
@@ -294,31 +313,72 @@ def handle_shop(final_shop: bool = False):
                     kx, ky = conf_pos
                     pyautogui.click(rect3[0] + kx, rect3[1] + ky)
                     time.sleep(0.2)
-                click_blank(rect3)
-                click_blank(rect3)
-                click_blank(rect3)
-                time.sleep(0.8)
+
+                # 收尾点击空白
+                for _ in range(20):
+                    click_blank(rect3)
+                    sleep(0.05)
+
+                any_bought = True
+
+                #  关键：买完后立刻重新截图，让 sold_out 出现/刷新，然后下一轮再过滤
+                # （避免这一轮坐标列表继续点到已变化的 UI）
+                break
+
+            if not any_bought:
+                # 有 note 但全都买不了，防止死循环
+                print("debug: no more purchasable notes found, breaking out of loop")
+                break
+
             time.sleep(0.2)
 
-        # 再买所有 100，并在每次买完后走大拇指 + 拿走 + 空白
+        # 再买所有 100，并在每次买完后走大拇指 + 拿走 + 空白（加入 sold_out 过滤）
+        sold_out_template = load_template("sold_out")
+
+        def is_near_any(x: int, y: int, points: list[tuple[int, int]], dist: int = 45) -> bool:
+            for px, py in points:
+                if abs(x - px) + abs(y - py) <= dist:
+                    return True
+            return False
+
         while True:
             check_pause_and_running()
             img, rect = capture_emulator()
-            hundred_positions = find_all_matches(img, hundred_template, 0.8) if hundred_template is not None else []
+
+            hundred_positions = find_all_matches(img, hundred_template, 0.9) if hundred_template is not None else []
             if not hundred_positions:
+                print("debug: no more purchasable 100s found, breaking out of loop")
                 break
-            for cx, cy in hundred_positions:
+
+            # 扫描当前屏所有 sold_out 标记
+            sold_positions = []
+            if sold_out_template is not None:
+                sold_positions = find_all_matches(img, sold_out_template, 0.8)
+
+            #  过滤掉“旁边有 sold_out 标记”的 100
+            filtered_hundreds = [p for p in hundred_positions if not is_near_any(p[0], p[1], sold_positions, dist=150)]
+            if not filtered_hundreds:
+                print("debug: all 100s are sold out (filtered), breaking out of loop")
+                break
+
+            bought_one = False
+
+            for cx, cy in filtered_hundreds:
                 check_pause_and_running()
                 img1, rect1 = capture_emulator()
                 pyautogui.click(rect1[0] + cx, rect1[1] + cy)
                 time.sleep(0.3)
+
                 img2, rect2 = capture_emulator()
                 buy_pos = match_template(img2, buy_template, threshold=0.8)
                 if not buy_pos:
+                    # 点了但没出现 buy：很可能是售罄/不可买，跳过
                     continue
+
                 bx, by = buy_pos
                 pyautogui.click(rect2[0] + bx, rect2[1] + by)
                 time.sleep(0.4)
+
                 img3, rect3 = capture_emulator()
                 conf_pos = match_template(img3, confirm_template,
                                           threshold=0.8) if confirm_template is not None else None
@@ -326,11 +386,22 @@ def handle_shop(final_shop: bool = False):
                     kx, ky = conf_pos
                     pyautogui.click(rect3[0] + kx, rect3[1] + ky)
                     time.sleep(0.2)
+
                 click_blank(rect3)
                 click_blank(rect3)
                 click_blank(rect3)
                 time.sleep(0.8)
+
                 take_thumb_reward()
+                bought_one = True
+
+                # 买完一个就 break，下一轮重新截图重新过滤 sold_out（避免坐标重排/假命中）
+                break
+
+            if not bought_one:
+                print("debug: found 100s but none could be bought (no buy button), breaking to avoid loop")
+                break
+
             time.sleep(0.2)
 
     def take_thumb_reward(timeout: float = 6.0):
@@ -364,13 +435,16 @@ def handle_shop(final_shop: bool = False):
 
     click_bubble(1)
     take_thumb_reward()
+    time.sleep(1)
     click_bubble(1)
     take_thumb_reward()
+    time.sleep(1)
     click_bubble(0)
     refresh_template = load_template("refresh")
     back_template = load_template("back")
     tag_template = load_template("tag")
     purchase_items()
+    time.sleep(1)
     if final_shop:
         refreshes = 0
         while refreshes < 2:
@@ -379,29 +453,49 @@ def handle_shop(final_shop: bool = False):
             pos = match_template(img, refresh_template, threshold=0.8)
             if pos:
                 x, y = pos
+                time.sleep(0.3)
                 pyautogui.click(rect[0] + x, rect[1] + y)
-                time.sleep(1.0)
+                time.sleep(0.1)
                 purchase_items()
                 refreshes += 1
             else:
                 break
         if refreshes == 2:
-            clear_all_tags()
+            # 购买流程结束，退出商店，准备退出星塔
+            print("debug: reached 2 refreshes in final shop, exiting shop")
             img, rect = capture_emulator()
             back_pos = match_template(img, back_template, threshold=0.8)
             if back_pos:
                 x, y = back_pos
                 pyautogui.click(rect[0] + x, rect[1] + y)
+                print("debug : quit shop after 2 refreshes")
                 time.sleep(0.5)
 
     else:
+        # debug: 提醒购买流程已结束
+        print("Purchase process completed. Checking for refresh and back options...")
         img, rect = capture_emulator()
         back_pos = match_template(img, back_template, threshold=0.8)
         if back_pos:
             x, y = back_pos
             pyautogui.click(rect[0] + x, rect[1] + y)
+            print("debug : quit shop")
             time.sleep(0.5)
+        else:
+            print("debug: no back button found, pause")
+            toggle_pause()
     click_bubble(2)
+    if final_shop:
+        # 最后一个商店，如果有确定按钮，点击它
+        print("debug: final shop - checking for confirm button")
+        confirm_template = load_template("confirm")
+        if confirm_template is not None:
+            img, rect = capture_emulator()
+            confirm_pos = match_template(img, confirm_template, threshold=0.8)
+            if confirm_pos:
+                cx, cy = confirm_pos
+                pyautogui.click(rect[0] + cx, rect[1] + cy)
+                time.sleep(0.5)
 
 
 
