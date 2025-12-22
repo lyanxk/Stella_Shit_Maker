@@ -466,6 +466,8 @@ def handle_shop(final_shop: bool = False):
             img, rect = capture_emulator()
             back_pos = match_template(img, back_template, threshold=0.8)
             if back_pos:
+                time.sleep(0.5)
+                click_blank(rect)
                 x, y = back_pos
                 pyautogui.click(rect[0] + x, rect[1] + y)
                 print("debug : quit shop after 2 refreshes")
@@ -521,6 +523,16 @@ def main_loop():
             sx, sy = save_pos
             pyautogui.click(rect[0] + sx, rect[1] + sy)
             print("Found 保存记录. Exiting run…")
+            time.sleep(0.5)
+
+            confirm_template = load_template("confirm")
+            if confirm_template is not None:
+                img2, rect2 = capture_emulator()
+                conf_pos = match_template(img2, confirm_template, threshold=0.8)
+                if conf_pos:
+                    cx, cy = conf_pos
+                    pyautogui.click(rect2[0] + cx, rect2[1] + cy)
+                    time.sleep(1.5)
             break
         enter_shop_template = load_template("enter_shop")
         shop_pos = match_template(img, enter_shop_template, threshold=0.8)
@@ -548,12 +560,24 @@ if __name__ == "__main__":
     keyboard.add_hotkey("s", mark_skip_initial)
     keyboard.add_hotkey("q", stop_running)
     print("Hotkeys: P=pause/resume, S=skip initial waits, Q=quit")
-    try:
-        main_loop()
-    except KeyboardInterrupt:
-        print("Stopped by user.")
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        RUNNING = False
-        print("Script finished.")
+
+    MAX_RUNS = 7
+    run_count = 0
+
+    while RUNNING and run_count < MAX_RUNS:
+        run_count += 1
+        print(f"===== Run {run_count}/{MAX_RUNS} =====")
+        try:
+            main_loop()
+            time.sleep(1.0)
+        except KeyboardInterrupt:
+            print("Stopped by user.")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+            time.sleep(2.0)
+        finally:
+            SKIP_INITIAL_WAIT = False
+
+    print("All runs completed.")
+
